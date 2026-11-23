@@ -8,6 +8,7 @@ import {
   fetchAllProtocolsForTeacher,
   deleteProtocolAsTeacher,
   saveLocalSubmission,
+  uploadProtocolToServer,
 } from '../utils/protocolApi';
 import {
   GraduationCap,
@@ -73,11 +74,12 @@ export const TeacherInboxModal: React.FC<TeacherInboxModalProps> = ({ isOpen, on
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const parsed = JSON.parse(String(reader.result)) as ExamProtocolSubmission;
         if (parsed && parsed.studentName && Array.isArray(parsed.measurements)) {
           saveLocalSubmission(parsed);
+          await uploadProtocolToServer(parsed);
           setSubmissions((prev) => {
             const filtered = prev.filter((s) => s.submissionId !== parsed.submissionId);
             return [parsed, ...filtered];
@@ -107,8 +109,14 @@ export const TeacherInboxModal: React.FC<TeacherInboxModalProps> = ({ isOpen, on
               <h3 className="font-bold text-sm sm:text-base text-slate-100 flex items-center gap-2">
                 <span>📬 Lehrer-Cockpit: Abgerufene Prüfungsprotokolle (Freier Fall)</span>
                 {isUnlocked && (
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-mono">
-                    {fromServer ? 'Online-Server verbunden' : 'Lokaler Speicher'}
+                  <span
+                    className={`text-[10px] px-2 py-0.5 rounded-full font-mono border ${
+                      fromServer
+                        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                        : 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                    }`}
+                  >
+                    {fromServer ? '✓ Zentraler SchoolLabs-Server aktiv' : '⚠️ Nur lokaler Browser-Speicher'}
                   </span>
                 )}
               </h3>
@@ -164,6 +172,20 @@ export const TeacherInboxModal: React.FC<TeacherInboxModalProps> = ({ isOpen, on
         ) : (
           /* Unlocked Teacher Inbox */
           <div className="flex-1 overflow-y-auto p-5 space-y-5 text-xs">
+            {!fromServer && (
+              <div className="bg-amber-950/50 border border-amber-500/50 rounded-xl p-3.5 text-amber-200 flex items-start gap-2.5 no-print">
+                <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <strong className="block text-amber-300">
+                    Wichtig: SchoolLabs-Hauptserver einmal aktualisieren &amp; neu starten!
+                  </strong>
+                  <p className="text-[11px] leading-relaxed">
+                    Die zentrale Server-Schnittstelle (<code className="text-amber-300">/api/exam-protocols</code>) antwortet auf deinem SchoolLabs-Server noch nicht, weil der SchoolLabs-Hauptserver nach dem GitHub-Update noch nicht neu gestartet wurde. Öffne in <strong>SchoolLabs</strong> einmal den Tab <strong>„Server-Verwaltung“</strong> und klicke auf <strong>„Update installieren“ + „Server neu starten“</strong> – danach werden alle Abgaben aus Inkognito-Tabs und von Schülergeräten zentral auf dem Server gespeichert!
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Reference Cheat Sheet for the 3 Stations */}
             <div className="bg-amber-950/20 border border-amber-500/30 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 no-print">
               <div className="space-y-1">

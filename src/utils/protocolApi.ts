@@ -2,6 +2,15 @@ import { ExamProtocolSubmission } from '../physics/freeFallExamEngine';
 
 const LAB_ID = 'freier-fall-pruefung';
 const LOCAL_SUBMISSIONS_KEY = 'ff_exam_local_submissions_v1';
+const TEACHER_PIN = '2417';
+
+function getApiUrl(pathSuffix = ''): string {
+  const origin =
+    typeof window !== 'undefined' && window.location && window.location.origin && window.location.origin !== 'null'
+      ? window.location.origin
+      : '';
+  return `${origin}/api/exam-protocols/${LAB_ID}${pathSuffix}`;
+}
 
 export function getLocalSubmissions(): ExamProtocolSubmission[] {
   try {
@@ -43,7 +52,7 @@ export async function uploadProtocolToServer(
   saveLocalSubmission(submission);
 
   try {
-    const response = await fetch(`/api/exam-protocols/${LAB_ID}`, {
+    const response = await fetch(getApiUrl(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -51,38 +60,52 @@ export async function uploadProtocolToServer(
       body: JSON.stringify(submission),
     });
 
-    if (response.ok) {
+    const contentType = response.headers.get('content-type') || '';
+    if (response.ok && contentType.includes('application/json')) {
       const data = await response.json();
-      return {
-        ok: true,
-        mode: 'server',
-        submissionId: data.submissionId || submission.submissionId,
-        message: 'Protokoll erfolgreich auf den SchoolLabs-Server hochgeladen! Deine Lehrkraft kann es jetzt direkt abrufen.',
-      };
+      if (data && data.ok) {
+        return {
+          ok: true,
+          mode: 'server',
+          submissionId: data.submissionId || submission.submissionId,
+          message:
+            '✓ Protokoll erfolgreich zentral auf dem SchoolLabs-Server gespeichert! Deine Lehrkraft kann es jetzt in jedem Browser unter „Lehrer-Abruf“ einsehen.',
+        };
+      }
     }
   } catch {
-    // Fall through to local fallback message
+    // Fall through to local fallback warning
   }
 
   return {
-    ok: true,
+    ok: false,
     mode: 'local_fallback',
     submissionId: submission.submissionId,
     message:
-      'Protokoll lokal gespeichert. Bitte lade zusätzlich die Protokoll-Datei (.json) herunter, falls du offline arbeitest.',
+      '⚠️ Hinweis: Der SchoolLabs-Hauptserver hat das Server-Update noch nicht geladen (Protokoll wurde nur lokal in diesem Browser-Tab gespeichert). Bitte im SchoolLabs-Adminbereich unter „Server-Verwaltung“ einmal „Update installieren & Server neu starten“ ausführen oder die Backup-Datei (.json) herunterladen!',
   };
 }
 
 export async function fetchAllProtocolsForTeacher(
   teacherPin: string
 ): Promise<{ ok: boolean; submissions: ExamProtocolSubmission[]; fromServer: boolean; error?: string }> {
+  if (teacherPin.trim() !== TEACHER_PIN) {
+    return {
+      ok: false,
+      submissions: [],
+      fromServer: false,
+      error: 'Ungültige Lehrer-PIN.',
+    };
+  }
+
   const local = getLocalSubmissions();
   try {
-    const response = await fetch(`/api/exam-protocols/${LAB_ID}`, {
+    const response = await fetch(getApiUrl(), {
       method: 'GET',
       headers: {
         'x-teacher-pin': teacherPin.trim(),
       },
+      cache: 'no-store',
     });
 
     if (response.status === 403) {
@@ -90,37 +113,29 @@ export async function fetchAllProtocolsForTeacher(
         ok: false,
         submissions: [],
         fromServer: false,
-        error: 'Ungültige Lehrer-PIN (Standard-PIN: 2026 oder 1234).',
+        error: 'Ungültige Lehrer-PIN.',
       };
     }
 
-    if (response.ok) {
+    const contentType = response.headers.get('content-type') || '';
+    if (response.ok && contentType.includes('application/json')) {
       const data = await response.json();
-      const serverList: ExamProtocolSubmission[] = Array.isArray(data.submissions)
-        ? data.submissions
-        : [];
-      const byId = new Map<string, ExamProtocolSubmission>();
-      for (const s of [...serverList, ...local]) {
-        if (s && s.submissionId && !byId.has(s.submissionId)) {
-          byId.set(s.submissionId, s);
+      if (data && data.ok && Array.isArray(data.submissions)) {
+        const serverList: ExamProtocolSubmission[] = data.submissions;
+        const byId = new Map<string, ExamProtocolSubmission>();
+        for (const s of [...serverList, ...local]) {
+          if (s && s.submissionId && !byId.has(s.submissionId)) {
+            byId.set(s.submissionId, s);
+          }
         }
+        const merged = Array.from(byId.values()).sort((a, b) =>
+          String(b.submittedAt || '').localeCompare(String(a.submittedAt || ''))
+        );
+        return { ok: true, submissions: merged, fromServer: true };
       }
-      const merged = Array.from(byId.values()).sort((a, b) =>
-        String(b.submittedAt || '').localeCompare(String(a.submittedAt || ''))
-      );
-      return { ok: true, submissions: merged, fromServer: true };
     }
   } catch {
-    // Server offline or local test mode
-  }
-
-  if (teacherPin.trim() !== '2026' && teacherPin.trim() !== '1234') {
-    return {
-      ok: false,
-      submissions: [],
-      fromServer: false,
-      error: 'Ungültige Lehrer-PIN (Standard-PIN: 2026 oder 1234).',
-    };
+    // Server offline or not yet updated
   }
 
   return {
@@ -136,7 +151,7 @@ export async function deleteProtocolAsTeacher(
 ): Promise<boolean> {
   deleteLocalSubmission(submissionId);
   try {
-    const response = await fetch(`/api/exam-protocols/${LAB_ID}/${encodeURIComponent(submissionId)}`, {
+    const response = await fetch(getApiUrl(`/${encodeURIComponent(submissionId)}`), {
       method: 'DELETE',
       headers: {
         'x-teacher-pin': teacherPin.trim(),
